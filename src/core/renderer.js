@@ -71,6 +71,9 @@ export function createStage(canvas) {
 // flip-flopping is worse than a steady, cheaper image). ?quality=high|low
 // pins a preset. ?quality=cinematic adds SSAO, volumetric fog with god rays and
 // depth of field on top of High; it is opt-in only and never falls back.
+// A switch only changes parameters on the existing pipeline, and app.js checks
+// the first frame after it: if any shader program failed, the previous preset
+// comes back and is pinned.
 // ---------------------------------------------------------------------------
 
 export const QUALITY_PRESETS = {
@@ -94,6 +97,7 @@ export class Quality {
     this._frames = 0;
     this._cooldown = 3;
     this._slow = 0;
+    this.previous = null;
   }
 
   get settings() {
@@ -103,7 +107,21 @@ export class Quality {
 
   set(preset) {
     if (preset === this.preset || !QUALITY_PRESETS[preset]) return;
+    this.previous = this.preset;
     this.preset = preset;
+    this.onChange(this.settings);
+  }
+
+  /**
+   * Undo a switch whose pipeline failed its first-frame check (see app.js),
+   * and stay there: a known-good image beats a cheaper black one.
+   */
+  revert() {
+    if (!this.previous) return;
+    const back = this.previous;
+    this.previous = null;
+    this.locked = true;
+    this.preset = back;
     this.onChange(this.settings);
   }
 

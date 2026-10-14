@@ -44,8 +44,13 @@ export class Loader {
     this.veil.classList.add('hidden');
   }
 
-  /** Replace the veil's contents with a message. `detail` may contain trusted HTML. */
+  /** The scene can't run: replace the veil's contents with an explanation. */
   fail(title, detail) {
+    this.message(title, detail);
+  }
+
+  /** Bring the veil back with a message (also used while a lost context is restored). `detail` may contain trusted HTML. */
+  message(title, detail) {
     this.veil.classList.remove('hidden');
     this.veil.classList.add('failed');
     this.veil.setAttribute('role', 'alert');

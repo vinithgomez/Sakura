@@ -475,6 +475,9 @@ export class Island {
     renderer.setRenderTarget(prev);
     quad.dispose();
     quad.material.dispose();
+    // (also re-baked after a lost WebGL context: the old targets' GL objects
+    // died with that context, so they are simply replaced — disposing them
+    // would ask the new context to delete objects it never owned)
     this.groundUniforms.uNoiseA.value = a.texture;
     this.groundUniforms.uNoiseB.value = b.texture;
   }

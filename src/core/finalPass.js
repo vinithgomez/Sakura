@@ -30,8 +30,13 @@ const shader = {
     uniform vec2 uResolution;
     varying vec2 vUv;
 
-    // (ACESFilmicToneMapping, toneMappingExposure and sRGBTransferOETF come
-    //  from the ShaderMaterial prefix three adds to every fragment shader)
+    // three only injects the tone-mapping chunk into a ShaderMaterial's prefix
+    // when that material draws straight to the screen. This pass draws into an
+    // intermediate target whenever SMAA follows it (the Low preset), so the
+    // material opts out (toneMapped: false) and includes the chunk itself,
+    // whichever target it renders to. (sRGBTransferOETF comes from the
+    // colour-space chunk, which three always includes.)
+    #include <tonemapping_pars_fragment>
 
     float grainHash(vec2 p) {
       vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -82,6 +87,7 @@ export class FinalPass extends Pass {
         fragmentShader: shader.fragment,
         depthTest: false,
         depthWrite: false,
+        toneMapped: false, // tone mapping is done explicitly above (see the shader)
       }),
     );
   }

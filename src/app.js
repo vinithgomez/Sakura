@@ -41,7 +41,12 @@ lighting.setLanternPosition(island.lanternLightPos);
 const grading = new Grading(postfx.final);
 postfx.initCinematic({ camera, sun: lighting.sun, getFocus: () => camera.position.distanceTo(controls.target) });
 
-const quality = new Quality(() => resize());
+const brokenPrograms = () => renderer.info.programs.filter((p) => p.diagnostics && !p.diagnostics.runnable);
+let verifyPipeline = null; // after a preset switch: programs already broken before it
+const quality = new Quality(() => {
+  verifyPipeline = new Set(brokenPrograms());
+  resize();
+});
 const ui = new UI(document.getElementById('ui'), { seasons, lighting, controls, quality });
 
 function resize() {
@@ -113,7 +118,22 @@ function tick(now) {
   clampCamera(camera);
 
   postfx.render(dt);
+  if (verifyPipeline) checkPipeline();
   quality.sample(dt);
+}
+
+/**
+ * After a preset switch, make sure every shader program the new pipeline used
+ * actually linked. A failed program draws nothing, so a broken pass would
+ * leave the canvas black; go back to the preset that was working instead.
+ */
+function checkPipeline() {
+  const before = verifyPipeline;
+  verifyPipeline = null;
+  const broken = brokenPrograms().filter((p) => !before.has(p));
+  if (!broken.length) return;
+  console.error(`[sakura] ${broken.length} shader program(s) failed on the "${quality.preset}" preset; going back to "${quality.previous}"`);
+  quality.revert();
 }
 
 /** Average GPU-synced frame time (ms) of the full pipeline at the current settings. */
@@ -146,10 +166,31 @@ await loader.step('', 1); // let the first frame land before the veil lifts
 loader.done();
 ui.showHint();
 
+// --- lost / restored WebGL context ---------------------------------------------
+// The browser can drop the context (driver reset, GPU memory pressure, a long
+// stall). preventDefault() asks for it back; three re-creates its own GL state
+// on restore, and every render target refills on its next frame. The only
+// GPU-made content that would stay empty is the baked ground noise, so bake it
+// again, re-apply the preset, and resume. If it never comes back, say so.
+let restoreTimer = 0;
 canvas.addEventListener('webglcontextlost', (e) => {
   e.preventDefault();
   renderer.setAnimationLoop(null);
-  loader.fail('The graphics card took a break', 'The browser reset its WebGL context (this happens after a driver update or when memory runs low). <a href="">Reload</a> to bring the island back.');
+  console.warn('[sakura] WebGL context lost; waiting for the browser to restore it');
+  loader.message('The graphics card took a break', 'Bringing the island back…');
+  clearTimeout(restoreTimer);
+  restoreTimer = setTimeout(
+    () => loader.message('The graphics card took a break', 'The browser didn’t hand the graphics context back. <a href="">Reload</a> to bring the island back.'),
+    8000,
+  );
+});
+canvas.addEventListener('webglcontextrestored', () => {
+  clearTimeout(restoreTimer);
+  island.bakeGroundNoise(renderer);
+  resize();
+  renderer.setAnimationLoop(tick);
+  console.info('[sakura] WebGL context restored');
+  setTimeout(() => loader.done(), 300); // let a frame land under the veil first
 });
 
 // Handy for poking around in the console.
@@ -162,5 +203,6 @@ window.__sakura = {
     controls.update(dt);
     clampCamera(camera);
     postfx.render(dt);
+    if (verifyPipeline) checkPipeline();
   },
 };
