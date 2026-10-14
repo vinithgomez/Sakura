@@ -1,0 +1,166 @@
+import { Timer, Vector3 } from 'three';
+import { createStage, Quality, clampCamera } from './core/renderer.js';
+import { PostFX } from './core/postfx.js';
+import { shared } from './core/uniforms.js';
+import { Seasons } from './systems/seasons.js';
+import { Lighting } from './systems/lighting.js';
+import { Tree } from './systems/tree.js';
+import { Island } from './systems/island.js';
+import { Particles } from './systems/particles.js';
+import { Grass } from './systems/grass.js';
+import { Grading } from './systems/grading.js';
+import { UI } from './systems/ui.js';
+import { loader } from './systems/loader.js';
+
+// Builds the world step by step (yielding between steps so the loading veil
+// can paint its progress), then runs the frame loop. Loaded by main.js.
+
+// --- stage ------------------------------------------------------------------
+
+await loader.step('preparing the stage…', 0.32);
+const canvas = document.getElementById('scene');
+const { renderer, scene, camera, controls } = createStage(canvas);
+const postfx = new PostFX(renderer, scene, camera);
+
+// --- systems ----------------------------------------------------------------
+
+const seasons = new Seasons();
+const lighting = new Lighting(scene, postfx, renderer);
+await loader.step('shaping the island…', 0.4);
+const island = new Island(scene);
+island.bakeGroundNoise(renderer);
+await loader.step('growing the tree…', 0.5);
+const tree = new Tree(scene, { anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()) });
+island.setTreeRoots(tree.rootPaths); // soil heaves around the surface roots
+await loader.step('sowing the grass…', 0.66);
+const grass = new Grass(scene, island);
+await loader.step('gathering petals…', 0.74);
+const particles = new Particles(scene, tree.getSpawnPoints());
+lighting.setLanternPosition(island.lanternLightPos);
+
+const grading = new Grading(postfx.final);
+postfx.initCinematic({ camera, sun: lighting.sun, getFocus: () => camera.position.distanceTo(controls.target) });
+
+const quality = new Quality(() => resize());
+const ui = new UI(document.getElementById('ui'), { seasons, lighting, controls, quality });
+
+function resize() {
+  const settings = quality.settings;
+  const { pixelRatio, samples, shadow, refraction, caustics, sparkle } = settings;
+  const w = Math.max(1, innerWidth);
+  const h = Math.max(1, innerHeight);
+  camera.aspect = w / h;
+  // keep the whole island in frame on portrait screens
+  camera.fov = w / h < 0.8 ? 52 : w / h < 1.2 ? 44 : 38;
+  // nudge the island up the frame so the timeline dock sits over open sky
+  camera.setViewOffset(w, h, 0, h * 0.07, w, h);
+  renderer.setPixelRatio(pixelRatio);
+  renderer.setSize(w, h, false);
+  postfx.setSize(w, h, pixelRatio);
+  postfx.setSamples(samples);
+  particles.setViewportHeight(h * pixelRatio);
+  shared.uViewportHeight.value = h * pixelRatio;
+  lighting.setShadowQuality(shadow);
+  postfx.setRefraction(refraction);
+  postfx.setCinematic(Boolean(settings.cinematic));
+  island.setQuality({ refraction, caustics, sparkle, sceneColor: postfx.sceneColor, resolution: renderer.getDrawingBufferSize(island.resolution) });
+  grass.setQuality(settings);
+}
+addEventListener('resize', resize);
+resize();
+
+// --- intro: glide in from afar ------------------------------------------------
+
+const introEnd = camera.position.clone();
+const introStart = introEnd.clone().sub(controls.target).multiplyScalar(1.55).add(controls.target).add(new Vector3(0, 6, 0));
+let intro = 0;
+camera.position.copy(introStart);
+controls.addEventListener('start', () => (intro = 1));
+
+// --- frame loop ---------------------------------------------------------------
+
+const timer = new Timer();
+timer.connect(document);
+
+function update(dt) {
+  shared.uTime.value += dt;
+
+  const state = seasons.update(dt);
+  shared.uWindStrength.value = state.wind;
+  shared.uSnowCover.value = state.snowCover;
+
+  lighting.update(state, dt, camera);
+  grading.update(state, lighting.day);
+  postfx.cinematic.setLight(shared.uSunDir.value, shared.uSunColor.value, shared.uSkyAmbient.value);
+  tree.update(state);
+  island.update(state, dt, lighting);
+  grass.update(state);
+  particles.update(state);
+  ui.update(state);
+}
+
+function tick(now) {
+  timer.update(now);
+  const dt = Math.min(timer.getDelta(), 0.1);
+  update(dt);
+
+  if (intro < 1) {
+    intro = Math.min(1, intro + dt / 4.5);
+    const k = 1 - Math.pow(1 - intro, 3);
+    camera.position.lerpVectors(introStart, introEnd, k);
+  }
+  controls.update(dt);
+  clampCamera(camera);
+
+  postfx.render(dt);
+  quality.sample(dt);
+}
+
+/** Average GPU-synced frame time (ms) of the full pipeline at the current settings. */
+function benchmark(frames = 8) {
+  const gl = renderer.getContext();
+  const px = new Uint8Array(4);
+  const frame = () => {
+    update(1 / 60);
+    postfx.render(1 / 60);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); // wait for the GPU
+  };
+  for (let i = 0; i < 3; i++) frame();
+  const t0 = performance.now();
+  for (let i = 0; i < frames; i++) frame();
+  return (performance.now() - t0) / frames;
+}
+
+// Compile every shader up front, measure the GPU, then start.
+await loader.step('mixing the paints…', 0.8);
+await renderer.compileAsync(scene, camera).catch(() => {});
+// (skip when the page has no size yet, e.g. a hidden frame — the governor adapts later)
+if (!quality.locked && innerWidth > 0 && innerHeight > 0) {
+  await loader.step('checking the light…', 0.94);
+  const ms = benchmark();
+  quality.calibrate(ms);
+  console.info(`[sakura] ${ms.toFixed(1)} ms/frame on High (${(1000 / ms).toFixed(0)} fps) → "${quality.settings.name}" preset`);
+}
+renderer.setAnimationLoop(tick);
+await loader.step('', 1); // let the first frame land before the veil lifts
+loader.done();
+ui.showHint();
+
+canvas.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  renderer.setAnimationLoop(null);
+  loader.fail('The graphics card took a break', 'The browser reset its WebGL context (this happens after a driver update or when memory runs low). <a href="">Reload</a> to bring the island back.');
+});
+
+// Handy for poking around in the console.
+window.__sakura = {
+  seasons, lighting, tree, island, grass, particles, ui, renderer, scene, camera, controls, quality, postfx,
+  /** Advance and draw one frame by hand (useful when the tab is hidden and rAF is paused). */
+  frame(dt = 1 / 60) {
+    intro = 1;
+    update(dt);
+    controls.update(dt);
+    clampCamera(camera);
+    postfx.render(dt);
+  },
+};

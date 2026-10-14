@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Sakura: A Year of Life — a floating cherry blossom island that lives through spring, summer, autumn and winter." />
+    <title>Sakura — A Year of Life</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=Shippori+Mincho:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene" aria-label="3D cherry blossom island"></canvas>
+      <div id="ui"></div>
+      <div id="veil" class="veil">
+        <div class="veil-mark" aria-hidden="true">桜</div>
+        <div class="veil-bar" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+        <div class="veil-text" aria-live="polite">planting the seed…</div>
+        <noscript><p class="veil-detail">This island is drawn live in the browser and needs JavaScript switched on.</p></noscript>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

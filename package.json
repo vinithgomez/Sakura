@@ -1,0 +1,21 @@
+{
+  "name": "sakura-a-year-of-life",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Interactive 3D cherry blossom island that lives through a full year — Three.js + Vite.",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "vite": "^8.3.2"
+  }
+}
