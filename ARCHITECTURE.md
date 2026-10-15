@@ -233,6 +233,25 @@ accordingly.
   die back under ice and snow, and two of them flower in early summer.
 * **Edge** — a rim of stones, a few half-submerged at the waterline, and
   pebbles on the floor (all one instanced draw).
+  * Grounding: each rim and waterline stone leans with the slope under it,
+    then drops just far enough that no side of it (checked per 45° sector of
+    its vertices) is above the ground or the water. A rim stone that would have
+    to sink more than 30% of its height first slides outward (≤ 0.3) onto the
+    flatter lip.
+  * Contact shadow: the baked noise's alpha channel holds a tight disc under
+    each stone, and the ground darkens by up to 38% there. It fades on steep
+    ground, where a plan-view disc would run down the pond wall.
+* **Bank** — steeper than any open ground, so it has its own rules in the
+  ground shader:
+  * Snow covers it: inside the rim the slope limit drops from N.y 0.55–0.75
+    to 0.2–0.42 (`snowAt()` on the CPU follows the same rule).
+  * Triplanar noise: where N.y < 0.9 the ground noise also comes from side
+    projections (`textureGrad`, with the gradients taken outside the branch),
+    so soil and pebbles are not smeared down the wall. The snow pattern
+    (`nB.r`) stays plan-view: the grass reads it back on the CPU, and side
+    lookups put snow patches on the bank in summer.
+  * The bank is lit with the bowl's analytic normal (from `terrainHeight()`'s
+    pond term), not the coarse mesh normals, which banded the wall vertically.
 
 ### Land (`island.js` + `grass.js`)
 * **Relief** — the shared analytic `terrainHeight()` (JS + GLSL) gains
@@ -253,8 +272,8 @@ accordingly.
   * Stones grow moss on their upper faces.
 * **Snow**:
   * The ground surface rises with the snow (vertex), deepest in hollows and
-    against stones. There is none on slopes, underwater, or at the rim, which
-    must keep meeting the underside.
+    against stones. There is none on slopes (except the pond bank, see *Pond*),
+    underwater, or at the rim, which must keep meeting the underside.
   * It arrives first in the same places.
   * High adds a glint per sparse "ice crystal" cell with its own facet,
     scaled by the direct sunlight the pixel received (so none in shadow).
@@ -263,6 +282,11 @@ accordingly.
 * **Underside** — a shader, not vertex colours: a humus band under the
   grassy rim with hanging root threads, then tilted, warped rock strata with
   seams and grain, darkening toward the tip.
+  * Smooth-shaded: the rows are jagged on purpose (the silhouette), and flat
+    shading lit each thin sliver on its own, which showed as pale wedges.
+  * At night nothing lights it (it faces away from the moon and the sky), so
+    a faint cool emissive fill (`UNDER_NIGHT_FILL`, 6% of the rock colour)
+    fades in as the day goes, keeping the strata readable.
 * **Grass** — instanced tufts of curved blades, planted clear of water, soil,
   stones and paths:
   * Two-sided: three flips the normal on back faces, and the shader then tilts

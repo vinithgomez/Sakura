@@ -17,6 +17,7 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   Object3D,
+  Quaternion,
   ShaderMaterial,
   SphereGeometry,
   UniformsLib,
@@ -48,6 +49,7 @@ import koiFrag from '../shaders/koi.frag?raw';
 const SEG = 160; // angular resolution shared by the grass top and the rocky underside
 const NOISE_EXTENT = 11; // baked ground-noise textures cover [-11, 11]² in x/z
 const MAX_ROCK_SPOTS = 48;
+const UNDER_NIGHT_FILL = 0.06; // moonlit fill on the underside at night (emissive, × rock colour)
 
 /** Irregular island outline radius at angle θ. */
 export function edgeRadius(theta) {
@@ -78,6 +80,7 @@ export class Island {
     this.resolution = new Vector2(1, 1); // drawing-buffer size, for the water's screen-space refraction
     this._dummy = new Object3D();
     this.rockSpots = []; // [x, z, radius] of stones & posts — moss and snow drifts gather there
+    this.stoneSpots = []; // [x, z, radius] of the stones alone — a contact shadow where each meets the ground
 
     this._buildTerrain();
     this._buildUnderside();
@@ -222,7 +225,10 @@ export class Island {
     const dx = this.surfaceHeight(x + e, z) - this.surfaceHeight(x - e, z);
     const dz = this.surfaceHeight(x, z + e) - this.surfaceHeight(x, z - e);
     const ny = (2 * e) / Math.hypot(dx, 2 * e, dz);
-    return { threshold: r - this._hollowAt(x, z, y) * 0.35 - rocks * 0.3, slope: smooth(0.55, 0.75, ny) };
+    // (the pond bank holds snow on steeper ground — same rule as the shader)
+    const bank = smooth(POND.r + 0.75, POND.r + 0.4, Math.hypot(x - POND.x, z - POND.z));
+    const slope = smooth(0.55 + (0.2 - 0.55) * bank, 0.75 + (0.42 - 0.75) * bank, ny);
+    return { threshold: r - this._hollowAt(x, z, y) * 0.35 - rocks * 0.3, slope };
   }
 
   /**
@@ -366,6 +372,26 @@ export class Island {
         vec2 nuv = gp / (2.0 * ${NOISE_EXTENT.toFixed(1)}) + 0.5;
         vec4 nA = texture2D(uNoiseA, nuv);
         vec4 nB = texture2D(uNoiseB, nuv);
+        // On the steep pond bank a straight-down projection stretches the noise
+        // up the wall (by 1/N.y, ~1.3–1.9×): blend in side projections there.
+        // Gradients are taken outside the branch so the lookups stay defined.
+        {
+          float sideW = 1.0 - smoothstep(0.62, 0.9, vGroundN.y);
+          vec2 uvX = vGroundPos.zy / (2.0 * ${NOISE_EXTENT.toFixed(1)}) + 0.5;
+          vec2 uvZ = vGroundPos.xy / (2.0 * ${NOISE_EXTENT.toFixed(1)}) + 0.5;
+          vec2 dxX = dFdx(uvX), dyX = dFdy(uvX), dxZ = dFdx(uvZ), dyZ = dFdy(uvZ);
+          if (sideW > 0.0) {
+            vec2 w = pow(abs(vGroundN.xz), vec2(4.0));
+            w /= max(w.x + w.y, 1e-4);
+            vec4 sA = textureGrad(uNoiseA, uvX, dxX, dyX) * w.x + textureGrad(uNoiseA, uvZ, dxZ, dyZ) * w.y;
+            vec4 sB = textureGrad(uNoiseB, uvX, dxX, dyX) * w.x + textureGrad(uNoiseB, uvZ, dxZ, dyZ) * w.y;
+            nA = mix(nA, sA, sideW);
+            // nB.r (the snow pattern) stays plan-view: the grass reads it back on
+            // the CPU, and side lookups put snow patches on the bank in summer.
+            // .b (stone proximity) and .a (contact) are plan-view distances.
+            nB.g = mix(nB.g, sB.g, sideW);
+          }
+        }
         float n1 = nA.r;
         float n2 = nA.g;
         float rocks = nB.b; // proximity to stones, the lantern and torii posts
@@ -415,10 +441,17 @@ export class Island {
         // snow: arrives first in hollows and against stones, never on steep
         // ground or under water; a faint blue in its own drift shadows
         float sn = nB.r - vLand.x * 0.35 - rocks * 0.3;
-        float slopeOk = smoothstep(0.55, 0.75, vGroundN.y);
+        // the pond bank (inside its rim) is steeper than open ground but still
+        // holds a sheet of snow; elsewhere steep ground stays bare
+        float bankZone = smoothstep(POND_RADIUS + 0.75, POND_RADIUS + 0.4, dPond);
+        float slopeOk = smoothstep(mix(0.55, 0.2, bankZone), mix(0.75, 0.42, bankZone), vGroundN.y);
         float snowAmt = smoothstep(sn - 0.08, sn + 0.08, uSnowCover * 1.2 - 0.08) * (1.0 - under) * slopeOk;
         vec3 snowCol = uSnowColor * mix(vec3(1.0), vec3(0.9, 0.94, 1.02), smoothstep(0.0, 0.12, vSnowDepth) * 0.6);
         col = mix(col, snowCol, snowAmt);
+        // contact shadow where a stone meets the ground (baked, nB.a). It is a
+        // plan-view disc, so it would run down the pond wall below a rim
+        // stone: steep ground lets it go.
+        col *= 1.0 - 0.38 * nB.a * smoothstep(0.6, 0.85, vGroundN.y);
         diffuseColor.rgb = col;
 
         // sparkle (High preset): a sprinkling of ice crystals, each with its own
@@ -432,6 +465,23 @@ export class Island {
       .replace(
         '#include <roughnessmap_fragment>',
         '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.62, snowAmt);',
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+        {
+          // The pond bank is steep and the terrain mesh coarse there, so its
+          // interpolated normals shaded the wall in vertical bands (hidden by
+          // the dark soil, plain on snow). Light the bank with the bowl's own
+          // analytic normal instead (layout.js: h -= 1.15·smoothstep(R+0.35, R−0.75, d)).
+          vec2 toP = vGroundPos.xz - POND_XZ;
+          float dp = max(length(toP), 1e-3);
+          float tb = clamp((dp - (POND_RADIUS + 0.35)) / -1.1, 0.0, 1.0);
+          float rise = 1.15 * 6.0 * tb * (1.0 - tb) / 1.1; // dh/d(distance), rising outward
+          vec3 bowlN = normalize(vec3(-rise * toP.x / dp, 1.0, -rise * toP.y / dp));
+          float onBank = smoothstep(POND_RADIUS + 0.6, POND_RADIUS + 0.3, dp);
+          normal = normalize(mix(normal, normalize((viewMatrix * vec4(bowlN, 0.0)).xyz), onBank * 0.85));
+        }`,
       )
       .replace(
         '#include <lights_fragment_end>',
@@ -471,13 +521,15 @@ export class Island {
       new ShaderMaterial({
         uniforms: {
           uLayer: { value: 0 },
-          uRocks: { value: this.rockSpots.slice(0, MAX_ROCK_SPOTS).map(([x, z, r]) => new Vector3(x, z, r)).concat(Array.from({ length: Math.max(0, MAX_ROCK_SPOTS - this.rockSpots.length) }, () => new Vector3(1e4, 1e4, 0))) },
+          uRocks: { value: spotUniform(this.rockSpots) },
+          uStones: { value: spotUniform(this.stoneSpots) },
         },
         vertexShader: 'varying vec2 vUv;\nvoid main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
         fragmentShader: `#include <common>
           ${GLSL.common}
           uniform int uLayer;
           uniform vec3 uRocks[${MAX_ROCK_SPOTS}];
+          uniform vec3 uStones[${MAX_ROCK_SPOTS}];
           varying vec2 vUv;
           void main() {
             vec2 gp = (vUv - 0.5) * 2.0 * ${NOISE_EXTENT.toFixed(1)};
@@ -495,7 +547,14 @@ export class Island {
                 float d = length(gp - r.xy);
                 prox = max(prox, smoothstep(r.z + 0.6, r.z * 0.7, d));
               }
-              gl_FragColor = vec4(fbm2(gp * 0.8 + 11.0) * 0.7 + vnoise(gp * 4.0) * 0.3, vnoise(gp * 4.0), prox, 1.0);
+              // contact: a tight dark rim right where a stone sits on the ground
+              float contact = 0.0;
+              for (int i = 0; i < ${MAX_ROCK_SPOTS}; i++) {
+                vec3 r = uStones[i];
+                float d = length(gp - r.xy);
+                contact = max(contact, smoothstep(r.z * 1.3, r.z * 0.8, d));
+              }
+              gl_FragColor = vec4(fbm2(gp * 0.8 + 11.0) * 0.7 + vnoise(gp * 4.0) * 0.3, vnoise(gp * 4.0), prox, contact);
             }
           }`,
         depthTest: false,
@@ -575,7 +634,10 @@ export class Island {
     geo.setIndex(index);
     geo.computeVertexNormals();
 
-    const mat = enhanceMaterial(new MeshStandardMaterial({ roughness: 1, flatShading: true }), {
+    // Smooth shading: the rows are jagged on purpose (the rock's silhouette),
+    // and flat shading lit each thin sliver on its own — pale wedges cutting
+    // across the strata. The strata, seams and grain carry the rock detail.
+    const mat = enhanceMaterial(new MeshStandardMaterial({ roughness: 1, flatShading: false }), {
       snow: true,
       key: 'rock-under',
       patch: strataPatch,
@@ -750,20 +812,68 @@ export class Island {
     }
 
     const dummy = new Object3D();
-    const rocks = new InstancedMesh(rockGeo, stoneMat, placements.length);
-    placements.forEach(([x, y, z, sx, sy, sz, ry], i) => {
+    const pose = ([x, y, z, sx, sy, sz, ry, tilt]) => {
       dummy.position.set(x, y, z);
       dummy.rotation.set(0, ry, 0);
+      if (tilt) dummy.quaternion.premultiply(tilt);
       dummy.scale.set(sx, sy, sz);
       dummy.updateMatrix();
-      rocks.setMatrixAt(i, dummy.matrix);
-    });
+      return dummy.matrix;
+    };
+
+    // Ground the stones around the pond. Placed by the height at their centre
+    // alone, those on the bank had their downhill side in the air (14 of 17 rim
+    // stones, by up to 0.27). Each now leans with the slope it sits on, then
+    // drops just far enough that no side of it is above the ground (or water).
+    // A rim stone overhanging the lip would have to sink almost out of sight,
+    // so it first slides a little outward (≤ 0.3) onto the flatter ground.
+    const groundUnder = (x, z) => Math.max(this.surfaceHeight(x, z), Math.hypot(x - POND.x, z - POND.z) < POND.r ? POND.water : -Infinity);
+    const rockPos = rockGeo.attributes.position;
+    const v = new Vector3();
+    const up = new Vector3(0, 1, 0);
+    const worstGap = (m, cx, cz) => {
+      const sectors = new Array(8).fill(Infinity);
+      for (let k = 0; k < rockPos.count; k++) {
+        v.fromBufferAttribute(rockPos, k).applyMatrix4(m);
+        const s = Math.floor(((Math.atan2(v.z - cz, v.x - cx) + Math.PI) / (2 * Math.PI)) * 8) % 8;
+        sectors[s] = Math.min(sectors[s], v.y - groundUnder(v.x, v.z));
+      }
+      return Math.max(...sectors.filter(Number.isFinite));
+    };
+    const settle = (p) => {
+      const [x, , z] = p;
+      const e = 0.15;
+      const n = new Vector3(groundUnder(x - e, z) - groundUnder(x + e, z), 2 * e, groundUnder(x, z - e) - groundUnder(x, z + e)).normalize();
+      p[7] = new Quaternion().setFromUnitVectors(up, n.lerp(up, 0.3).normalize());
+      return worstGap(pose(p), x, z);
+    };
+    for (let i = 0; i < rimCount + 7; i++) {
+      const p = placements[i];
+      let gap = settle(p);
+      if (i < rimCount) {
+        const lift = p[1] - terrainHeight(p[0], p[2]);
+        const dx = p[0] - POND.x, dz = p[2] - POND.z, d = Math.hypot(dx, dz);
+        for (let k = 0; k < 6 && gap > p[4] * 0.3; k++) {
+          p[0] += (dx / d) * 0.05;
+          p[2] += (dz / d) * 0.05;
+          p[1] = terrainHeight(p[0], p[2]) + lift;
+          gap = settle(p);
+        }
+      }
+      if (gap > -0.02) p[1] -= gap + 0.02;
+    }
+
+    const rocks = new InstancedMesh(rockGeo, stoneMat, placements.length);
+    placements.forEach((p, i) => rocks.setMatrixAt(i, pose(p)));
     rocks.castShadow = true;
     rocks.receiveShadow = true;
     this.group.add(rocks);
     for (const [x, , z, sx, , sz] of placements) {
       const r = Math.max(sx, sz);
-      if (r > 0.14) this.rockSpots.push([x, z, r]); // not the little floor pebbles
+      if (r > 0.14) {
+        this.rockSpots.push([x, z, r]); // not the little floor pebbles
+        this.stoneSpots.push([x, z, r]);
+      }
     }
 
     // stepping stones from the torii toward the tree
@@ -995,6 +1105,14 @@ export class Island {
 
 // --- geometry helpers ------------------------------------------------------------
 
+/** [x, z, r] spots → a fixed-length vec3 uniform array (unused slots far away). */
+function spotUniform(spots) {
+  return spots
+    .slice(0, MAX_ROCK_SPOTS)
+    .map(([x, z, r]) => new Vector3(x, z, r))
+    .concat(Array.from({ length: Math.max(0, MAX_ROCK_SPOTS - spots.length) }, () => new Vector3(1e4, 1e4, 0)));
+}
+
 function jitterGeometry(geo, amount, seed) {
   const p = geo.attributes.position;
   const v = new Vector3();
@@ -1211,11 +1329,20 @@ function mossOnStone(shader) {
  * with dark seams between layers, darkening toward the hanging tip.
  */
 function strataPatch(shader) {
+  shader.uniforms.uDay = shared.uDay;
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', '#include <common>\nattribute float aDepth;\nvarying float vUnderDepth;')
     .replace('#include <begin_vertex>', '#include <begin_vertex>\nvUnderDepth = aDepth;');
   shader.fragmentShader = shader.fragmentShader
-    .replace('#include <uv_pars_fragment>', '#include <uv_pars_fragment>\nvarying float vUnderDepth;')
+    .replace('#include <uv_pars_fragment>', `#include <uv_pars_fragment>\nvarying float vUnderDepth;\nuniform float uDay;\nconst float UNDER_NIGHT_FILL = ${UNDER_NIGHT_FILL.toFixed(3)};`)
+    .replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+      // At night nothing reaches the underside (it faces away from the moon and
+      // the sky), so it went pure black. A faint, cool moonlit fill keeps the
+      // strata readable; it fades out as the day comes up.
+      totalEmissiveRadiance += diffuseColor.rgb * vec3(0.55, 0.62, 0.85) * UNDER_NIGHT_FILL * (1.0 - smoothstep(0.2, 0.7, uDay));`,
+    )
     .replace(
       '#include <color_fragment>',
       `#include <color_fragment>
