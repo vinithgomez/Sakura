@@ -9,3 +9,6 @@ CLAUDE.md
 *.zip
 .env
 .env.*
+
+# before/after comparison sheets (local only)
+docs/v1.0.5-compare/

@@ -7,6 +7,10 @@ Scrub the timeline or press play. Blossoms open one by one and shed in a petal s
 
 ![The same island in spring, summer, autumn and winter](docs/screenshots/seasons.jpg)
 
+[![Play: the timeline on autoplay, a whole year in 18 seconds (Cinematic)](docs/screenshots/timeline.jpg)](docs/screenshots/timeline.mp4)
+
+*The timeline on autoplay in Cinematic, sped up to a whole year in 18 seconds (the app takes about 1.6 minutes). Click to play the MP4.*
+
 Built with **Three.js** and **Vite** in plain JavaScript, with no other runtime dependencies. Every texture is
 painted procedurally at startup, so there are no image or model assets to download.
 
@@ -90,6 +94,8 @@ npm run build
 npm run preview
 ```
 
+Then open the URL it prints (**http://localhost:4173** by default).
+
 `npm run build` writes static files to `dist/`. The build uses relative asset paths, so the same output works at a domain root or under a sub-path.
 
 > The UI fonts (Shippori Mincho, Cormorant Garamond) load from Google Fonts. Offline, the page falls back to system serif fonts and still works.
@@ -146,12 +152,12 @@ These were measured on a **GeForce GT 730** (a 2014 entry-level card, well below
 
 | Preset | Summer (heaviest season) | Winter |
 |---|---|---|
-| Low | **13.7 ms (73 fps)** | **12.2 ms (82 fps)** |
-| High | 24.4 ms (41 fps) | 19.1 ms (52 fps) |
-| Cinematic | 27.1 ms (37 fps) | 25.7 ms (39 fps) |
+| Low | **13.3 ms (75 fps)** | **11.3 ms (88 fps)** |
+| High | 22.7 ms (44 fps) | 18.2 ms (55 fps) |
+| Cinematic | 26.6 ms (38 fps) | 25.5 ms (39 fps) |
 
-At grass level in summer (the worst case for fill rate), Low measured 15.0 ms (67 fps) and High 24.8 ms in an earlier
-measurement. **Low holds 60 fps on that card at 1280×720.**
+These were measured on the v1.0.5 production build. At grass level beside the pond in summer (the worst case for
+fill rate), Low measured 15.3 ms (65 fps) and High 24.9 ms. **Low holds 60 fps on that card at 1280×720.**
 
 **At 1920×1080** the same card is fill-rate bound: the startup benchmark measures High at about 40 ms (25 fps) and
 starts on Low, which then runs at roughly 38–40 fps. For 60 fps on this class of card, use a smaller window. A typical mid-range laptop GPU (Iris Xe, MX-series, RTX 3050 laptop) has roughly
@@ -169,6 +175,9 @@ What made that possible:
 - After a lost WebGL context is restored, the browser can report a single `INVALID_OPERATION` (WebGL error 1282) while
   the ground textures are rebaked. Every frame afterwards is clean and the image is unaffected.
 - On Low (no MSAA), thin leaf edges shimmer slightly while orbiting. High and Cinematic anti-alias them.
+- On Cinematic at 1280×720, faint horizontal and vertical lines can show over flat, bright areas such as snow in
+  close-ups. Low and High are unaffected.
+- At dusk the inside of the canopy goes very dark, losing detail between the lit outer leaves.
 
 ## Deploy
 
