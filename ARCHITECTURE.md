@@ -175,6 +175,12 @@ timeline.
   * A matching `customDepthMaterial` keeps shadows in sync with the sway.
 * **Canopy** — blossoms and leaves attach to twig samples of the mesh:
   * Ring centres with r < 0.03 plus every tip, thinned to a steady ~1,250 points.
+  * Each point carries two sprays per layer, spread *along* the branch (up to
+    ±0.45 units along its chain), never into the air beside it. Every spray's
+    hub lies on the rendered branch axis, and it takes that point's wind
+    weight, so it sways with the wood. `__sakura.checkSprayAttachment()`
+    measures hub → bark distance for every visible spray across seasons and
+    wind phases (all 0).
   * Two instanced layers (blossoms, leaves) share `foliage.vert/.frag`,
     selected with `#define`s. Billboarding happens in view space.
   * Canopy shadows come from half-density proxies on a shadow-only layer.

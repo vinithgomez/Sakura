@@ -41,8 +41,8 @@ import foliageFrag from '../shaders/foliage.frag?raw';
 //      and weep the way a Somei-Yoshino's do);
 //   4. the skeleton is split into chains and swept into smooth Catmull-Rom
 //      tubes with junction collars, root flare and surface roots.
-// The canopy (blossoms / leaves) is unchanged — it simply attaches to the
-// twig samples the new mesh produces.
+// The canopy (blossoms / leaves) grows on the twig samples the mesh produces:
+// every spray's hub lies on a branch axis (see pointAlongBranch).
 // ---------------------------------------------------------------------------
 
 const UP = new Vector3(0, 1, 0);
@@ -352,12 +352,16 @@ export class Tree {
       perPoint: 2,
       jitter: 0.3,
       size: 0.95,
+      samples,
+      maxDist,
     });
     this.leaves = createFoliageLayer(points, this.crown, atlas, rng, {
       blossom: false,
       perPoint: 2,
       jitter: 0.34,
       size: 1.0,
+      samples,
+      maxDist,
     });
     this.group.add(this.blossoms, this.leaves);
 
@@ -446,6 +450,7 @@ function shadowProxy(layer) {
  * canopy keeps the same fullness whatever shape the skeleton grows into.
  */
 function attachPointsFromTwigs(samples, maxDist, rng, { twigRadius = 0.03, target = 1250 } = {}) {
+  samples.forEach((s, i) => (s.index = i));
   const twig = samples.filter((s) => s.radius < twigRadius && s.dist > 0);
   const tips = twig.filter((s) => s.end);
   const rest = twig.filter((s) => !s.end);
@@ -455,7 +460,40 @@ function attachPointsFromTwigs(samples, maxDist, rng, { twigRadius = 0.03, targe
     [rest[i], rest[j]] = [rest[j], rest[i]];
   }
   const chosen = [...tips, ...rest.slice(0, Math.max(0, target - tips.length))];
-  return chosen.map((s) => ({ pos: s.pos.clone(), flex: Math.pow(s.dist / maxDist, 1.6) }));
+  return chosen.map((s) => ({ pos: s.pos.clone(), flex: Math.pow(s.dist / maxDist, 1.6), index: s.index }));
+}
+
+/**
+ * A point `offset` units along the branch from ring sample `index` (negative =
+ * toward the base), clamped to the ends of that chain. Samples are ring centres
+ * in chain order (`end` marks a chain's last ring), and the tube is straight
+ * between rings, so the result lies on the rendered branch's axis. Its wind
+ * weight is interpolated the same way as the bark's, so it sways with the wood.
+ */
+function pointAlongBranch(samples, index, offset, maxDist, out) {
+  let i = index;
+  let left = Math.abs(offset);
+  const forward = offset >= 0;
+  for (;;) {
+    const j = forward ? (samples[i].end ? -1 : i + 1) : i > 0 && !samples[i - 1].end ? i - 1 : -1;
+    if (j < 0) break; // end of the chain
+    const a = samples[i].pos;
+    const b = samples[j].pos;
+    const len = a.distanceTo(b);
+    if (len >= left) {
+      const t = len > 1e-6 ? left / len : 0;
+      out.pos.lerpVectors(a, b, t);
+      out.dist = samples[i].dist + (samples[j].dist - samples[i].dist) * t;
+      out.flex = Math.pow(Math.max(0, out.dist) / maxDist, 1.6);
+      return out;
+    }
+    left -= len;
+    i = j;
+  }
+  out.pos.copy(samples[i].pos);
+  out.dist = samples[i].dist;
+  out.flex = Math.pow(Math.max(0, out.dist) / maxDist, 1.6);
+  return out;
 }
 
 function crownBounds(points) {
@@ -473,20 +511,28 @@ const LAYER_TINTS = {
   leaf: ['#7fb357', '#5c9a45', '#e8b53c', '#df6a2a', '#b32a2a'],
 };
 
-function createFoliageLayer(points, crown, atlas, rng, { blossom, perPoint, jitter, size }) {
+function createFoliageLayer(points, crown, atlas, rng, { blossom, perPoint, jitter, size, samples, maxDist }) {
   const count = points.length * perPoint;
   const center = new Float32Array(count * 3);
   const rand = new Float32Array(count * 4);
   const out = new Float32Array(count * 4);
   const flex = new Float32Array(count);
   const d = new Vector3();
+  const at = { pos: new Vector3(), dist: 0, flex: 0 };
 
   let k = 0;
   for (const p of points) {
     for (let s = 0; s < perPoint; s++, k++) {
-      const x = p.pos.x + rng.spread(jitter);
-      const y = p.pos.y + rng.spread(jitter) + (blossom ? 0 : 0.05);
-      const z = p.pos.z + rng.spread(jitter);
+      // Each spray grows *on* its twig: spread along the branch rather than
+      // scattered in the air around it, so its hub (and the bud it opens
+      // from) is always on the bark and sways with it. Three draws as before
+      // keep the random stream, and so every spray's colour, size, timing and
+      // rotation, exactly as they were.
+      const along = rng.spread(jitter) * 1.5;
+      rng.spread(jitter);
+      rng.spread(jitter);
+      pointAlongBranch(samples, p.index, along, maxDist, at);
+      const { x, y, z } = at.pos;
       center.set([x, y, z], k * 3);
       rand.set([rng.next(), rng.next(), rng.next(), rng.next()], k * 4);
 
@@ -497,7 +543,7 @@ function createFoliageLayer(points, crown, atlas, rng, { blossom, perPoint, jitt
       d.normalize();
       const shade = Math.min(1, Math.max(0, (r - 0.35) / 0.75)) * 0.8 + Math.max(0, d.y) * 0.2;
       out.set([d.x, d.y, d.z, shade], k * 4);
-      flex[k] = p.flex;
+      flex[k] = at.flex;
     }
   }
 

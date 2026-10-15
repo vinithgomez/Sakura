@@ -205,4 +205,9 @@ window.__sakura = {
     postfx.render(dt);
     if (verifyPipeline) checkPipeline();
   },
+  /** Dev check: distance from every visible spray's hub to the nearest branch surface (loaded on demand). */
+  async checkSprayAttachment(options) {
+    const { checkSprayAttachment } = await import('./dev/sprayCheck.js');
+    return checkSprayAttachment({ tree, seasons, windDir: shared.uWindDir.value }, options);
+  },
 };
