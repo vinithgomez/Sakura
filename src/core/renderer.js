@@ -65,7 +65,9 @@ export function createStage(canvas) {
 //   low  — 1× pixels, SMAA, 1024² shadows, alpha-blended water, no caustics,
 //          no sparkle, fewer and coarser grass tufts
 //
-// A GPU-synced benchmark behind the loading veil renders the High preset; if
+// A GPU-synced benchmark behind the loading veil renders the High preset (warm
+// up, then the median of 20 frames, re-measured up to twice unless clearly
+// fast, keeping the fastest); if
 // that runs under 30 fps the app starts on Low. At runtime, three seconds
 // under 30 fps on High also drops to Low (never back up on its own —
 // flip-flopping is worse than a steady, cheaper image). ?quality=high|low
@@ -98,6 +100,14 @@ export class Quality {
     this._cooldown = 3;
     this._slow = 0;
     this.previous = null;
+    // dev: pretend every frame takes at least this long (ms), to test the
+    // runtime drop to Low in auto mode — ?slowframes=45 or
+    // __sakura.simulateSlowFrames(45). Only the runtime governor sees it.
+    this.simulatedFrameMs = Number(params.get('slowframes')) || 0;
+  }
+
+  simulateSlowFrames(ms = 45) {
+    this.simulatedFrameMs = Math.max(0, Math.min(ms, 240));
   }
 
   get settings() {
@@ -134,6 +144,7 @@ export class Quality {
 
   sample(dt) {
     if (dt > 0.25) return; // tab switch / hitch — not representative
+    if (this.simulatedFrameMs) dt = Math.max(dt, this.simulatedFrameMs / 1000);
     this._acc += dt;
     this._frames++;
     if (this._acc < 1) return;

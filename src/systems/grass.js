@@ -22,7 +22,8 @@ import { edgeRadius } from './island.js';
 //   • wind: the shared windOffset(), weighted by height², plus a fast flutter
 //   • seasons: fresh shoots in spring, lush summer, each blade drying to straw
 //     on its own schedule in autumn, frosted tips at the turn of winter, and
-//     sinking under the snow
+//     sinking under the snow patch by patch, in step with the ground turning
+//     white beneath it (the ground shader's snow rule, via island.snowAt)
 //   • quality: High draws more tufts with finer blades; Low fewer, coarser
 //     ones. Both geometries share the per-tuft data, so switching is free.
 // ---------------------------------------------------------------------------
@@ -56,7 +57,19 @@ export class Grass {
       high: createTuftGeometry({ blades: 4, rows: 5, seed: 3 }),
       low: createTuftGeometry({ blades: 3, rows: 3, seed: 3 }),
     };
-    for (const g of Object.values(this.geometries)) g.setAttribute('aTuft', data);
+    // where each tuft's patch of ground turns white (island.snowAt): the blade
+    // sinks with its own patch, so no tip pokes out of ground already snowed over
+    const snowAt = new InstancedBufferAttribute(
+      new Float32Array(tufts.flatMap((t) => {
+        const s = island.snowAt(t.x, t.z);
+        return [s.threshold, s.slope];
+      })),
+      2,
+    );
+    for (const g of Object.values(this.geometries)) {
+      g.setAttribute('aTuft', data);
+      g.setAttribute('aSnowAt', snowAt);
+    }
 
     this.material = new MeshLambertMaterial({ side: DoubleSide });
     enhanceMaterial(this.material, { key: 'grass-v2', patch: (shader) => this._patch(shader) });
@@ -114,6 +127,7 @@ export class Grass {
     shader.uniforms.uTime = shared.uTime;
     shader.uniforms.uWindStrength = shared.uWindStrength;
     shader.uniforms.uWindDir = shared.uWindDir;
+    shader.uniforms.uSnowCover = shared.uSnowCover;
     shader.uniforms.uSunDir = shared.uSunDir;
     shader.uniforms.uSunColor = shared.uSunColor;
     shader.vertexShader = shader.vertexShader
@@ -122,7 +136,9 @@ export class Grass {
         `#include <common>
         ${GLSL.wind}
         attribute vec4 aTuft;
+        attribute vec2 aSnowAt; // this patch's snow threshold · can it hold snow (0 when steep)
         uniform float uHeight;
+        uniform float uSnowCover;
         uniform float uFlop;
         varying float vH;
         varying vec4 vTuft;
@@ -133,7 +149,11 @@ export class Grass {
         `#include <begin_vertex>
         vH = uv.y;
         vTuft = aTuft;
-        transformed.y *= uHeight;
+        // the ground shader's own snow rule at this tuft: once its patch turns
+        // white the blade has sunk out of sight (gone by half-coverage)
+        float snowHere = smoothstep(aSnowAt.x - 0.08, aSnowAt.x + 0.08, uSnowCover * 1.2 - 0.08) * aSnowAt.y;
+        float buried = 1.0 - smoothstep(0.0, 0.5, snowHere);
+        transformed.y *= uHeight * buried;
         // dry blades flop over
         transformed.xz += normalize(vec2(aTuft.w - 0.5, 0.35)) * uFlop * uv.y * uv.y * 0.14;`,
       )

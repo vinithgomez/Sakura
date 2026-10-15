@@ -136,19 +136,41 @@ function checkPipeline() {
   quality.revert();
 }
 
-/** Average GPU-synced frame time (ms) of the full pipeline at the current settings. */
-function benchmark(frames = 8) {
+const CLEARLY_FAST_MS = 28; // comfortably inside the 30 fps (33.3 ms) cut-off
+
+const median = (values) => {
+  const s = [...values].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/**
+ * Median GPU-synced frame time (ms) of the full pipeline at the current
+ * settings. The first frames after the shader compile still pay for texture
+ * uploads, the shadow map and driver work (measured on the GT 730: ~460, then
+ * 35–80, then 26–55 ms against a steady ~25), so it warms up until three
+ * frames in a row agree, then times `frames` frames one by one: a few slow
+ * ones can't move the median the way they moved the old 8-frame average.
+ */
+function benchmark(frames = 20, maxWarmup = 30) {
   const gl = renderer.getContext();
   const px = new Uint8Array(4);
   const frame = () => {
+    const t0 = performance.now();
     update(1 / 60);
     postfx.render(1 / 60);
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); // wait for the GPU
+    return performance.now() - t0;
   };
-  for (let i = 0; i < 3; i++) frame();
-  const t0 = performance.now();
-  for (let i = 0; i < frames; i++) frame();
-  return (performance.now() - t0) / frames;
+  const warm = [];
+  for (let i = 0; i < maxWarmup; i++) {
+    warm.push(frame());
+    const last = warm.slice(-3);
+    if (i >= 4 && Math.max(...last) < Math.min(...last) * 1.15) break;
+  }
+  const times = [];
+  for (let i = 0; i < frames; i++) times.push(frame());
+  return { ms: median(times), warmup: warm.length };
 }
 
 // Compile every shader up front, measure the GPU, then start.
@@ -157,9 +179,18 @@ await renderer.compileAsync(scene, camera).catch(() => {});
 // (skip when the page has no size yet, e.g. a hidden frame — the governor adapts later)
 if (!quality.locked && innerWidth > 0 && innerHeight > 0) {
   await loader.step('checking the light…', 0.94);
-  const ms = benchmark();
+  const first = benchmark();
+  let ms = first.ms;
+  // Hysteresis: anything short of clearly fast is measured up to twice more,
+  // 0.4 s apart, and the fastest median counts. Load from elsewhere only ever
+  // makes frames slower, so a passing spike can't lock Low for the session;
+  // only a GPU that stays slow (or stays busy) for the whole check does.
+  for (let pass = 0; pass < 2 && ms > CLEARLY_FAST_MS; pass++) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    ms = Math.min(ms, benchmark(20, 8).ms);
+  }
   quality.calibrate(ms);
-  console.info(`[sakura] ${ms.toFixed(1)} ms/frame on High (${(1000 / ms).toFixed(0)} fps) → "${quality.settings.name}" preset`);
+  console.info(`[sakura] ${ms.toFixed(1)} ms/frame on High (${(1000 / ms).toFixed(0)} fps, median; first pass ${first.ms.toFixed(1)} ms after ${first.warmup} warm-up frames) → "${quality.settings.name}" preset`);
 }
 renderer.setAnimationLoop(tick);
 await loader.step('', 1); // let the first frame land before the veil lifts
@@ -204,6 +235,11 @@ window.__sakura = {
     clampCamera(camera);
     postfx.render(dt);
     if (verifyPipeline) checkPipeline();
+  },
+  /** Dev: make the runtime governor see frames at least `ms` long (0 = off), to test the drop to Low in auto mode. */
+  simulateSlowFrames(ms = 45) {
+    quality.simulateSlowFrames(ms);
+    return `governor now sees frames of at least ${quality.simulatedFrameMs} ms`;
   },
   /** Dev check: distance from every visible spray's hub to the nearest branch surface (loaded on demand). */
   async checkSprayAttachment(options) {

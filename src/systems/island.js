@@ -172,13 +172,7 @@ export class Island {
       const x = p.getX(i);
       const z = p.getZ(i);
       const y = p.getY(i);
-      // hollow: how far the ground sits below its surroundings (0.8 units out)
-      let avg = 0;
-      for (let k = 0; k < 6; k++) {
-        const a = (k / 6) * Math.PI * 2;
-        avg += terrainHeight(x + Math.cos(a) * 0.8, z + Math.sin(a) * 0.8) + microRelief(x + Math.cos(a) * 0.8, z + Math.sin(a) * 0.8);
-      }
-      const hollow = y > POND.water + 0.05 ? Math.min(1, Math.max(0, (avg / 6 - y) * 9)) : 0;
+      const hollow = this._hollowAt(x, z, y);
       // bare soil: trampled earth at the trunk base, and along the roots
       const dTrunk = Math.hypot(x - TREE.x, z - TREE.z);
       const soil = Math.max(smooth(1.45, 0.75, dTrunk), this._rootHeave(x, z).soil);
@@ -187,6 +181,48 @@ export class Island {
     }
     land.needsUpdate = true;
     geo.computeVertexNormals();
+  }
+
+  /** Hollowness (0–1): how far the ground at height `y` sits below its surroundings, 0.8 units out. */
+  _hollowAt(x, z, y) {
+    let avg = 0;
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      avg += terrainHeight(x + Math.cos(a) * 0.8, z + Math.sin(a) * 0.8) + microRelief(x + Math.cos(a) * 0.8, z + Math.sin(a) * 0.8);
+    }
+    return y > POND.water + 0.05 ? Math.min(1, Math.max(0, (avg / 6 - y) * 9)) : 0;
+  }
+
+  /**
+   * The ground shader's snow rule at one spot, for things standing on the
+   * ground (grass): `threshold` is the snow level at which this patch turns
+   * white (snow arrives first in hollows and against stones), `slope` is 0 on
+   * ground too steep to hold snow. Same inputs as the shader: the baked noise
+   * (read back once after bakeGroundNoise), hollowness and the surface normal.
+   */
+  snowAt(x, z) {
+    const nb = this._noiseB;
+    let r = 0.5;
+    let rocks = 0;
+    if (nb) {
+      // bilinear lookup in the baked texture (row 0 = v 0 = the −z edge)
+      const fx = (x / (2 * NOISE_EXTENT) + 0.5) * nb.size - 0.5;
+      const fz = (z / (2 * NOISE_EXTENT) + 0.5) * nb.size - 0.5;
+      const x0 = Math.max(0, Math.min(nb.size - 2, Math.floor(fx)));
+      const z0 = Math.max(0, Math.min(nb.size - 2, Math.floor(fz)));
+      const tx = Math.min(1, Math.max(0, fx - x0));
+      const tz = Math.min(1, Math.max(0, fz - z0));
+      const at = (i, j, c) => nb.data[((z0 + j) * nb.size + (x0 + i)) * 4 + c] / 255;
+      const lerp2 = (c) => (at(0, 0, c) * (1 - tx) + at(1, 0, c) * tx) * (1 - tz) + (at(0, 1, c) * (1 - tx) + at(1, 1, c) * tx) * tz;
+      r = lerp2(0);
+      rocks = lerp2(2);
+    }
+    const y = this.surfaceHeight(x, z);
+    const e = 0.12;
+    const dx = this.surfaceHeight(x + e, z) - this.surfaceHeight(x - e, z);
+    const dz = this.surfaceHeight(x, z + e) - this.surfaceHeight(x, z - e);
+    const ny = (2 * e) / Math.hypot(dx, 2 * e, dz);
+    return { threshold: r - this._hollowAt(x, z, y) * 0.35 - rocks * 0.3, slope: smooth(0.55, 0.75, ny) };
   }
 
   /**
@@ -471,6 +507,13 @@ export class Island {
       quad.material.uniforms.uLayer.value = layer;
       renderer.setRenderTarget(target);
       quad.render(renderer);
+    }
+    // a CPU copy of the snow / stone layer, so props on the ground can follow
+    // the same per-spot snow rule as the ground shader (see snowAt)
+    if (!this._noiseB) {
+      const data = new Uint8Array(size * size * 4);
+      renderer.readRenderTargetPixels(b, 0, 0, size, size, data);
+      this._noiseB = { data, size };
     }
     renderer.setRenderTarget(prev);
     quad.dispose();

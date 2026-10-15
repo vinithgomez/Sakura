@@ -346,6 +346,8 @@ Two checks load on demand (they are separate lazy chunks, never part of normal s
   across seasons and wind phases. Expected: 0 for all sprays.
 * `__sakura.measureFlicker({ mode, year, camera })` — renders consecutive frames and counts canopy pixels that jump
   and jump straight back (`spikeRate`) and spray-sized blinks (`popsPerFrame`).
+* `__sakura.simulateSlowFrames(45)` (or `?slowframes=45`) — the runtime governor sees every frame as at least 45 ms,
+  to test the drop from High to Low in auto mode; `simulateSlowFrames(0)` turns it off.
 
 ### UI (`ui.js`)
 Plain DOM + CSS: vertical title, a brush-line timeline with 春 夏 秋 冬
@@ -380,7 +382,10 @@ High also has dense, fine grass (12k tufts) and snow sparkle. Low has 4.2k coars
 tufts and no sparkle.
 
 A GPU-synced benchmark behind the loading veil renders High; under 30 fps the
-app starts on Low. Three seconds under 30 fps at runtime also drops to Low.
+app starts on Low. It warms up until three frames in a row agree (the first
+frames after the shader compile are 2–20× slower), takes the median of 20
+frames, and, unless that is clearly fast, measures up to twice more 0.4 s apart
+and keeps the fastest, so a passing load spike can't lock Low for the session. Three seconds under 30 fps at runtime also drops to Low.
 `?quality=high|low|cinematic` pins a preset, and a pinned preset is never
 changed at runtime. Cinematic is opt-in only: the benchmark never picks it.
 
