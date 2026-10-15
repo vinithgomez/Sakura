@@ -340,6 +340,13 @@ compile, benchmark), yielding a paint each time so the veil’s progress line
 advances. A failed import, a failed context, or a lost WebGL context all end
 in the same calm failure message.
 
+### Dev checks (console)
+Two checks load on demand (they are separate lazy chunks, never part of normal startup):
+* `__sakura.checkSprayAttachment()` — distance from every visible blossom / leaf hub to the nearest branch surface,
+  across seasons and wind phases. Expected: 0 for all sprays.
+* `__sakura.measureFlicker({ mode, year, camera })` — renders consecutive frames and counts canopy pixels that jump
+  and jump straight back (`spikeRate`) and spray-sized blinks (`popsPerFrame`).
+
 ### UI (`ui.js`)
 Plain DOM + CSS: vertical title, a brush-line timeline with 春 夏 秋 冬
 markers and a hanko-seal thumb, sekki caption, autoplay and day/night buttons,

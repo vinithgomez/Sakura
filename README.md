@@ -146,12 +146,15 @@ These were measured on a **GeForce GT 730** (a 2014 entry-level card, well below
 
 | Preset | Summer (heaviest season) | Winter |
 |---|---|---|
-| Low | **11.2 ms (89 fps)** | **9.6 ms (104 fps)** |
-| High | 23.4 ms (43 fps) | 18.5 ms (54 fps) |
-| Cinematic | 27.2 ms (37 fps) | 25.5 ms (39 fps) |
+| Low | **13.7 ms (73 fps)** | **12.2 ms (82 fps)** |
+| High | 24.4 ms (41 fps) | 19.1 ms (52 fps) |
+| Cinematic | 27.1 ms (37 fps) | 25.7 ms (39 fps) |
 
-At grass level in summer (the worst case for fill rate), Low measured 15.0 ms (67 fps) and High 24.8 ms. **Low holds
-60 fps on that card everywhere.** A typical mid-range laptop GPU (Iris Xe, MX-series, RTX 3050 laptop) has roughly
+At grass level in summer (the worst case for fill rate), Low measured 15.0 ms (67 fps) and High 24.8 ms in an earlier
+measurement. **Low holds 60 fps on that card at 1280×720.**
+
+**At 1920×1080** the same card is fill-rate bound: the startup benchmark measures High at about 40 ms (25 fps) and
+starts on Low, which then runs at roughly 38–40 fps. For 60 fps on this class of card, use a smaller window. A typical mid-range laptop GPU (Iris Xe, MX-series, RTX 3050 laptop) has roughly
 three times that headroom.
 
 What made that possible:
@@ -160,6 +163,12 @@ What made that possible:
 - The ground's ~17 noise evaluations per pixel are baked once into mipmapped textures, which saved ~5 ms on the GT 730.
 - MSAA is kept out of the post-processing ping-pong buffers. The scene resolves once.
 - The final pass (tone mapping, grade, vignette, grain) replaced three's output pass at the same cost. The cinematic look is free on Low and High.
+
+## Known issues
+
+- After a lost WebGL context is restored, the browser can report a single `INVALID_OPERATION` (WebGL error 1282) while
+  the ground textures are rebaked. Every frame afterwards is clean and the image is unaffected.
+- On Low (no MSAA), thin leaf edges shimmer slightly while orbiting. High and Cinematic anti-alias them.
 
 ## Deploy
 
