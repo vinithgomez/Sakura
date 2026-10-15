@@ -47,6 +47,22 @@ void main() {
   vec2 corner = rotate2(position.xy, aRand.z * 6.2831 + flutter);
 
   vec4 mvPosition = viewMatrix * vec4(world, 1.0);
+#ifndef DEPTH_ONLY
+  // Sprays grow along the twigs, so overlapping billboards often sit at
+  // almost the same depth, and neighbours on one twig sway a little out of
+  // phase: their front-to-back order would swap from frame to frame
+  // (flicker). Give each spray its own fixed depth instead, spread ±0.35
+  // around its hub (about the depth spread sprays had before they were
+  // anchored to the twigs): slide it along its view ray (screen position
+  // unchanged) and rescale it by the same factor (screen size unchanged).
+  // Overlapping sprays are then far enough apart in depth that sway never
+  // reorders them. Colour pass only — the shadow map keeps the true hubs.
+  float dist = max(-mvPosition.z, 1e-3);
+  float layer = fract(aRand.x * 7.31 + aRand.w * 3.17 + aRand.y * 1.93);
+  float k = max(0.5, 1.0 - (layer - 0.5) * 0.7 / dist);
+  mvPosition.xyz *= k;
+  size *= k;
+#endif
   mvPosition.xy += corner * size;
   gl_Position = projectionMatrix * mvPosition;
   vUv = uv;

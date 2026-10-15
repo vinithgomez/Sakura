@@ -210,4 +210,9 @@ window.__sakura = {
     const { checkSprayAttachment } = await import('./dev/sprayCheck.js');
     return checkSprayAttachment({ tree, seasons, windDir: shared.uWindDir.value }, options);
   },
+  /** Dev check: frame-to-frame flicker in the canopy (loaded on demand). */
+  async measureFlicker(run) {
+    const { measureFlicker } = await import('./dev/flickerCheck.js');
+    return measureFlicker({ app: window.__sakura, tree, particles, seasons, lighting, camera, controls, renderer, postfx }, run);
+  },
 };

@@ -180,7 +180,15 @@ timeline.
     hub lies on the rendered branch axis, and it takes that point's wind
     weight, so it sways with the wood. `__sakura.checkSprayAttachment()`
     measures hub → bark distance for every visible spray across seasons and
-    wind phases (all 0).
+    wind phases (all 0). A walk that reaches a twig's end turns back, so no
+    two sprays share a hub.
+  * Sprays on one twig overlap at nearly the same depth and sway slightly
+    out of phase, so their front-to-back order would swap frame to frame.
+    The colour pass gives each spray a fixed depth, spread ±0.35 along its
+    view ray and rescaled, so its screen position and size are unchanged.
+    `__sakura.measureFlicker({ mode, year, camera })` renders consecutive
+    frames and reports canopy pixels that jump and jump straight back
+    (spikes), and spray-sized blinks (pops).
   * Two instanced layers (blossoms, leaves) share `foliage.vert/.frag`,
     selected with `#define`s. Billboarding happens in view space.
   * Canopy shadows come from half-density proxies on a shadow-only layer.

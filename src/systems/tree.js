@@ -465,18 +465,25 @@ function attachPointsFromTwigs(samples, maxDist, rng, { twigRadius = 0.03, targe
 
 /**
  * A point `offset` units along the branch from ring sample `index` (negative =
- * toward the base), clamped to the ends of that chain. Samples are ring centres
- * in chain order (`end` marks a chain's last ring), and the tube is straight
- * between rings, so the result lies on the rendered branch's axis. Its wind
- * weight is interpolated the same way as the bark's, so it sways with the wood.
+ * toward the base). At the end of the chain the walk turns back rather than
+ * stopping, so two sprays never pile up on exactly the same spot (coincident
+ * billboards depth-fight). Samples are ring centres in chain order (`end` marks
+ * a chain's last ring), and the tube is straight between rings, so the result
+ * lies on the rendered branch's axis. Its wind weight is interpolated the same
+ * way as the bark's, so it sways with the wood.
  */
 function pointAlongBranch(samples, index, offset, maxDist, out) {
   let i = index;
   let left = Math.abs(offset);
-  const forward = offset >= 0;
+  let forward = offset >= 0;
+  let turns = 0;
   for (;;) {
-    const j = forward ? (samples[i].end ? -1 : i + 1) : i > 0 && !samples[i - 1].end ? i - 1 : -1;
-    if (j < 0) break; // end of the chain
+    let j = forward ? (samples[i].end ? -1 : i + 1) : i > 0 && !samples[i - 1].end ? i - 1 : -1;
+    if (j < 0 && turns++ < 2) {
+      forward = !forward; // bounce off the chain's end
+      j = forward ? (samples[i].end ? -1 : i + 1) : i > 0 && !samples[i - 1].end ? i - 1 : -1;
+    }
+    if (j < 0) break; // a single-ring chain: nowhere to go
     const a = samples[i].pos;
     const b = samples[j].pos;
     const len = a.distanceTo(b);
